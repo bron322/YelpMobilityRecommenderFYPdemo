@@ -3,7 +3,7 @@
 A lightweight web dashboard for exploring **mobility patterns in Yelp users** using **DBSCAN-based spatial hubs**.  
 Built as a Final Year Project demo to communicate key findings clearly with interactive, research-style UI.
 
----
+![cover](./fyp_demo_cover.png)
 
 ## ✨ What this demo shows
 
