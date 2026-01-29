@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { DatasetStats, CityData } from '@/data/dashboardData';
 import { Button } from '@/components/ui/button';
+import ChatbotWidget from '@/components/ChatbotWidget';
 
 interface OverviewTabProps {
   stats: DatasetStats;
@@ -196,7 +197,11 @@ const OverviewTab: React.FC<OverviewTabProps> = ({
           </table>
         </div>
       </div>
+
+      {/* Floating Chatbot Widget */}
+      <ChatbotWidget />
     </div>
+    
   );
 };
 
