@@ -10,18 +10,53 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.embeddings import Embeddings
+from langchain_huggingface import HuggingFaceEmbeddings
+import re
+from typing import List, Dict, Any
+from langchain_core.documents import Document
+import json as pyjson
 
-# Inherit from 'Embeddings' so FAISS recognizes it correctly
-class FakeEmbeddings(Embeddings):
-    def embed_documents(self, texts):
-        # Return a list of 768 dummy numbers for each text
-        return [[0.0] * 768 for _ in texts]
+LAST_PICK = {}  # user_id -> business_id
 
-    def embed_query(self, text):
-        return [0.0] * 768
-    
+def parse_rag_text(text: str) -> Dict[str, Any]:
+    def grab(pattern, default=""):
+        m = re.search(pattern, text)
+        return m.group(1).strip() if m else default
+
+    city, state = "", ""
+    m = re.search(r"City:\s*([^,]+),\s*([A-Z]{2})\.", text)
+    if m:
+        city, state = m.group(1).strip(), m.group(2).strip()
+
+    return {
+        "name": grab(r"Name:\s*(.*?)\.\s*Categories:"),
+        "categories": grab(r"Categories:\s*(.*?)\.\s*City:"),
+        "city": city,
+        "state": state,
+        "rating": grab(r"Rating:\s*([0-9.]+)\s*stars"),
+        "review_count": grab(r"Review Count:\s*([0-9]+)"),
+    }
+
+def get_topk_with_scores(vectorstore, query: str, k: int = 5):
+    # FAISS supports similarity_search_with_score
+    docs_and_scores = vectorstore.similarity_search_with_score(query, k=k)
+    out = []
+    for doc, score in docs_and_scores:
+        row = parse_rag_text(doc.page_content)
+        row["score"] = float(score)
+        # if you store business_id in metadata later, include it here
+        out.append(row)
+    return out
+
+def safe_json_loads(raw: str):
+    s = raw.strip()
+    if s.startswith("```"):
+        s = re.sub(r"^```(?:json)?\s*|\s*```$", "", s, flags=re.I | re.S).strip()
+    return pyjson.loads(s)
+
 # 1. SETUP & CONFIGURATION
 os.environ["GOOGLE_API_KEY"] = "AIzaSyDg1rLmGmu9DERU7cabgg1hm2A1focDCLo" # Uncomment if not set in system env
+INDEX_FOLDER = "faiss_index_store_local"
 
 app = FastAPI()
 
@@ -48,98 +83,73 @@ except FileNotFoundError:
     print(f"WARNING: Could not find user_profiles.json at {user_profiles_path}")
     user_profiles = {}
 
-# B. Load Restaurant Data & Build Vector Index
-# INDEX_FOLDER = "faiss_index_store"
-
-# # Initialize Embeddings
-# embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-
-# # 1. Try to load existing index (FREE & FAST)
-# if os.path.exists(INDEX_FOLDER):
-#     print("Loading vector index from local disk...")
-#     # allow_dangerous_deserialization is needed for local files
-#     vectorstore = FAISS.load_local(INDEX_FOLDER, embeddings, allow_dangerous_deserialization=True)
-#     retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-#     print("Vector index loaded successfully!")
-
-# # 2. If no index exists, build it (COSTS QUOTA)
-# else:
-#     print("Index not found. Building new index from CSV...")
-#     try:
-#         csv_path = r"C:\\Users\\lebro\\OneDrive - Nanyang Technological University\\Github\\fyp-demo\\yelp-mobility-dashboard\\public\\data\\restaurant_rag_data.csv"
-#         df = pd.read_csv(csv_path)
-        
-#         # === CRITICAL STEP: LIMIT DATA ===
-#         # Use only 50 rows for now so you don't get blocked again.
-#         # Once this works, you can increase it later.
-#         df = df.head(50) 
-#         print(f"Processing {len(df)} restaurants...")
-
-#         vectorstore = FAISS.from_texts(
-#             texts=df['rag_text'].tolist(),
-#             embedding=embeddings
-#         )
-        
-#         # Save to disk so we don't have to do this again
-#         vectorstore.save_local(INDEX_FOLDER)
-        
-#         retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-#         print("Vector index built and SAVED to disk successfully!")
-        
-#     except Exception as e:
-#         print(f"CRITICAL ERROR loading restaurant data: {e}")
-#         retriever = None
-
-# NEW LINE (Use this instead):
-print("Loading data with FAKE embeddings (Safe Mode)...")
-
 try:
     # 1. Read the CSV
     csv_path = r"C:\\Users\\lebro\\OneDrive - Nanyang Technological University\\Github\\fyp-demo\\yelp-mobility-dashboard\\public\\data\\restaurant_rag_data.csv"
     df = pd.read_csv(csv_path)
-    
-    # 2. Limit to 50 rows (Optional for fake embeddings, but good practice)
-    df = df.head(50) 
+
     print(f"Processing {len(df)} restaurants...")
 
-    # 3. Use the FAKE embeddings (Free, runs instantly)
-    embeddings = FakeEmbeddings()
+    # 3. Use hugging face embeddings
+    texts = df["rag_text"].dropna().astype(str).tolist()
+    print("Total rows:", len(texts))
 
-    # 4. Create the Vector Store (in memory is fine for testing)
-    vectorstore = FAISS.from_texts(
-        texts=df['rag_text'].tolist(),
-        embedding=embeddings
-    )
-    
-    # 5. Create the Retriever
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+
+    docs = [
+        Document(
+            page_content=str(r["rag_text"]),
+            metadata={"business_id": str(r["business_id"]), "name": str(r["name"])}
+        )
+        for _, r in df.dropna(subset=["rag_text"]).iterrows()
+    ]
+
+    if os.path.exists(INDEX_FOLDER):
+        vectorstore = FAISS.load_local(INDEX_FOLDER, embeddings, allow_dangerous_deserialization=True)
+    else:
+        batch_size = 1000
+        vectorstore = FAISS.from_documents(docs[:batch_size], embedding=embeddings)
+        for i in range(batch_size, len(docs), batch_size):
+            vectorstore.add_documents(docs[i:i+batch_size])
+        vectorstore.save_local(INDEX_FOLDER)
+
     retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-    print("Vector index built successfully (Fake Mode)!")
+    
+    print("Vector index built successfully!")
     
 except Exception as e:
     print(f"CRITICAL ERROR loading restaurant data: {e}")
     retriever = None
 
 # Helper function to format retrieved docs
-def format_docs(docs):
-    return "\n\n".join([d.page_content for d in docs])
+def format_docs(docs, max_chars=3500):
+    lines = []
+    for d in docs:
+        bid = d.metadata.get("business_id", "UNKNOWN_ID")
+        name = d.metadata.get("name", "UNKNOWN_NAME")
+        lines.append(f"[{bid}] {name}\n{d.page_content}")
+    joined = "\n\n---\n\n".join(lines)
+    return joined[:max_chars]
 
 # 3. DEFINE THE RAG CHAIN
 llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.7)
 
 template = """
 You are a Restaurant Recommendation Assistant.
-Use the User's History to understand their taste, and the Context to find new matches.
 
-USER HISTORY (Past Visits):
+RULES:
+- You MUST recommend exactly ONE restaurant from the CANDIDATES list.
+- Output MUST be valid JSON with keys: business_id, name, reason.
+- If you cannot decide, pick the best match from CANDIDATES (do NOT invent new places).
+
+USER HISTORY:
 {user_history}
 
-AVAILABLE RESTAURANTS (Context):
+CANDIDATES (choose from these only):
 {context}
 
 USER QUESTION:
 {question}
-
-Answer:
 """
 prompt = ChatPromptTemplate.from_template(template)
 
@@ -147,33 +157,103 @@ class ChatRequest(BaseModel):
     message: str
     user_id: str
 
+# @app.post("/chat")
+# async def chat_endpoint(request: ChatRequest):
+#     if not retriever:
+#         raise HTTPException(status_code=500, detail="Server Error: Restaurant data not loaded.")
+
+#     # 1. Look up user history
+#     user_history = user_profiles.get(request.user_id, "No past history available (New User).")
+    
+#     # 2. Define the chain
+#     chain = (
+#         {
+#             "context": retriever | format_docs, 
+#             "question": RunnablePassthrough(),
+#             "user_history": lambda x: user_history 
+#         }
+#         | prompt
+#         | llm
+#         | StrOutputParser()
+#     )
+    
+#     # 3. Invoke
+#     try:
+#         response = chain.invoke(request.message)
+#         return {"reply": response}
+#     except Exception as e:
+#         print(f"Error generating response: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
     if not retriever:
         raise HTTPException(status_code=500, detail="Server Error: Restaurant data not loaded.")
 
-    # 1. Look up user history
     user_history = user_profiles.get(request.user_id, "No past history available (New User).")
-    
-    # 2. Define the chain
+
+    # 1) Retrieve candidates with scores (verifiable)
+    search_query = f"{request.message}\n\nUser history:\n{user_history}"
+    docs_and_scores = vectorstore.similarity_search_with_score(search_query, k=8)
+    candidate_docs = [d for d, s in docs_and_scores]
+
+    last = LAST_PICK.get(request.user_id)
+    if last:
+        candidate_docs = [d for d in candidate_docs if d.metadata.get("business_id") != last]
+
+    candidate_ids = {d.metadata.get("business_id") for d in candidate_docs}
+
+    context = format_docs(candidate_docs)
+
+    # 2) Call LLM
     chain = (
         {
-            "context": retriever | format_docs, 
+            "context": lambda _: context,
             "question": RunnablePassthrough(),
-            "user_history": lambda x: user_history 
+            "user_history": lambda _: user_history,
         }
         | prompt
         | llm
         | StrOutputParser()
     )
-    
-    # 3. Invoke
+
+    raw = chain.invoke(request.message)
+
+    # 3) Verify JSON + groundedness
+    parsed = None
+    grounded = False
     try:
-        response = chain.invoke(request.message)
-        return {"reply": response}
-    except Exception as e:
-        print(f"Error generating response: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        parsed = safe_json_loads(raw)
+        grounded = parsed.get("business_id") in candidate_ids
+    except Exception:
+        grounded = False
+
+    # 4) Fallback if not grounded
+    if not grounded:
+        top = candidate_docs[0]
+        parsed = {
+            "business_id": top.metadata.get("business_id"),
+            "name": top.metadata.get("name"),
+            "reason": "Fallback: model output was not grounded; returning top retrieved candidate."
+        }
+        LAST_PICK[request.user_id] = parsed["business_id"]
+
+    # 5) Return with evidence (so you can verify in UI)
+    evidence = []
+    for d, score in docs_and_scores:
+        row = parse_rag_text(d.page_content)
+        row.update({
+            "business_id": d.metadata.get("business_id"),
+            "name_meta": d.metadata.get("name"),
+            "score": float(score),
+        })
+        evidence.append(row)
+
+    return {
+        "reply": parsed,
+        "is_grounded": grounded,
+        "evidence": evidence
+    }
 
 if __name__ == "__main__":
     import uvicorn

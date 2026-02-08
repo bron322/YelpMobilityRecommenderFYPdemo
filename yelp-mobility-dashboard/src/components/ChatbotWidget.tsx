@@ -6,7 +6,9 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface Message {
   id: string;
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant',
+  evidence?: any[];
+  isGrounded?: boolean;
   content: string;
   timestamp: Date;
 }
@@ -100,10 +102,17 @@ const ChatbotWidget: React.FC = () => {
       const data = await response.json();
 
       // 3. Add AI Response to UI
+      const assistantText =
+        typeof data.reply === "string"
+          ? data.reply
+          : `✅ ${data.reply?.name ?? "Recommendation"}\n${data.reply?.reason ?? ""}`;
+
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: data.reply, // The text from Gemini
+        role: "assistant",
+        content: assistantText,        // ✅ always string
+        evidence: data.evidence,
+        isGrounded: data.is_grounded,
         timestamp: new Date(),
       };
 
@@ -208,18 +217,14 @@ const ChatbotWidget: React.FC = () => {
                   )}
                 </div>
                 <div
-                  className={`max-w-[80%] px-4 py-2.5 rounded-2xl text-sm ${
+                  className={`max-w-[80%] px-4 py-2.5 rounded-2xl text-sm whitespace-pre-wrap ${
                     message.role === 'user'
                       ? 'bg-primary text-primary-foreground rounded-br-md'
                       : 'bg-secondary text-foreground rounded-bl-md'
                   }`}
                 >
-                  {message.content.split('**').map((part, i) =>
-                    i % 2 === 1 ? (
-                      <strong key={i}>{part}</strong>
-                    ) : (
-                      <span key={i}>{part}</span>
-                    )
+                  {String(message.content).split('**').map((part, i) =>
+                    i % 2 === 1 ? <strong key={i}>{part}</strong> : <span key={i}>{part}</span>
                   )}
                 </div>
               </div>
