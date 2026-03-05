@@ -16,12 +16,13 @@ from typing import List, Dict, Any
 from langchain_core.documents import Document
 import json as pyjson
 from pydantic import BaseModel
+import difflib
 
 LAST_PICK = {}  # user_id -> business_id
 
 class ValidateUserRequest(BaseModel):
     user_id: str
-    
+
 def normalize_uid(uid: str) -> str:
     uid = (uid or "").strip()
     uid = uid.strip('"').strip("'")
@@ -101,11 +102,22 @@ print("Initializing server...")
 
 # A. Load User Profiles (Using your specific path)
 # We use r"" (raw string) to handle Windows backslashes correctly
-user_profiles_path = r"C:\\Users\\lebro\\OneDrive - Nanyang Technological University\\Github\\fyp-demo\\yelp-mobility-dashboard\\public\\data\\user_profiles.json"
+user_profiles_path = r"C:\\Users\\lebro\\OneDrive - Nanyang Technological University\\Github\\fyp-demo\\yelp-mobility-dashboard\\public\\data\\user_profiles_enriched.json"
+
+def load_json_with_fallback(path: str):
+    # Try common encodings on Windows
+    encodings = ["utf-8", "utf-8-sig", "latin-1"]
+    last_err = None
+    for enc in encodings:
+        try:
+            with open(path, "r", encoding=enc) as f:
+                return json.load(f)
+        except Exception as e:
+            last_err = e
+    raise last_err
 
 try:
-    with open(user_profiles_path, "r") as f:
-        user_profiles = json.load(f)
+    user_profiles = load_json_with_fallback(user_profiles_path)
     print(f"Loaded {len(user_profiles)} user profiles.")
 except FileNotFoundError:
     print(f"WARNING: Could not find user_profiles.json at {user_profiles_path}")
@@ -116,8 +128,24 @@ try:
     csv_path = r"C:\\Users\\lebro\\OneDrive - Nanyang Technological University\\Github\\fyp-demo\\yelp-mobility-dashboard\\public\\data\\restaurant_rag_data.csv"
     df = pd.read_csv(csv_path)
 
+    def extract_city_state(rag_text: str):
+        m = re.search(r"City:\s*([^,]+),\s*([A-Z]{2})\.", rag_text)
+        if not m:
+            return None, None
+        return m.group(1).strip(), m.group(2).strip()
+    
+    df["city"], df["state"] = zip(*df["rag_text"].fillna("").map(extract_city_state))
     print(f"Processing {len(df)} restaurants...")
 
+    def infer_user_city_state_from_history(user_history: str):
+        pairs = re.findall(r"([A-Za-z .'-]+),\s*([A-Z]{2})", user_history)
+        if not pairs:
+            return None
+        # count frequency
+        from collections import Counter
+        c = Counter([(a.strip(), b.strip()) for a,b in pairs])
+        return c.most_common(1)[0][0]  # (city, state)
+    
     # 3. Use hugging face embeddings
     texts = df["rag_text"].dropna().astype(str).tolist()
     print("Total rows:", len(texts))
@@ -213,32 +241,183 @@ class ChatRequest(BaseModel):
 #         print(f"Error generating response: {e}")
 #         raise HTTPException(status_code=500, detail=str(e))
 
+# @app.post("/chat")
+# async def chat_endpoint(request: ChatRequest):
+#     if not retriever:
+#         raise HTTPException(status_code=500, detail="Server Error: Restaurant data not loaded.")
+
+#     user_history = user_profiles.get(request.user_id, "No past history available (New User).")
+
+#     # 1) Retrieve candidates with scores (verifiable)
+#     search_query = f"{request.message}\n\nUser history:\n{user_history}"
+#     docs_and_scores = vectorstore.similarity_search_with_score(search_query, k=50)
+
+#     user_loc = infer_user_city_state_from_history(user_history)  # (city,state) or None
+
+#     filtered = []
+#     for d, s in docs_and_scores:
+#         row = parse_rag_text(d.page_content)
+#         if user_loc:
+#             if (row["city"], row["state"]) != user_loc:
+#                 continue
+#         filtered.append((d, s))
+
+#     # fallback if too few local
+#     if len(filtered) < 8 and user_loc:
+#         # relax to same state
+#         filtered = [(d,s) for d,s in docs_and_scores
+#                     if parse_rag_text(d.page_content)["state"] == user_loc[1]]
+
+#     if len(filtered) < 8:
+#         filtered = docs_and_scores
+
+#     candidate_docs = [d for d, s in filtered[:8]]
+
+#     last = LAST_PICK.get(request.user_id)
+#     if last:
+#         candidate_docs = [d for d in candidate_docs if d.metadata.get("business_id") != last]
+
+#     candidate_ids = {d.metadata.get("business_id") for d in candidate_docs}
+
+#     context = format_docs(candidate_docs)
+
+#     # 2) Call LLM
+#     chain = (
+#         {
+#             "context": lambda _: context,
+#             "question": RunnablePassthrough(),
+#             "user_history": lambda _: user_history,
+#         }
+#         | prompt
+#         | llm
+#         | StrOutputParser()
+#     )
+
+#     raw = chain.invoke(request.message)
+
+#     # 3) Verify JSON + groundedness
+#     parsed = None
+#     grounded = False
+#     try:
+#         parsed = safe_json_loads(raw)
+#         grounded = parsed.get("business_id") in candidate_ids
+#     except Exception:
+#         grounded = False
+
+#     # 4) Fallback if not grounded
+#     if not grounded:
+#         top = candidate_docs[0]
+#         parsed = {
+#             "business_id": top.metadata.get("business_id"),
+#             "name": top.metadata.get("name"),
+#             "reason": "Fallback: model output was not grounded; returning top retrieved candidate."
+#         }
+#         LAST_PICK[request.user_id] = parsed["business_id"]
+
+#     # 5) Return with evidence (so you can verify in UI)
+#     evidence = []
+#     for d, score in docs_and_scores:
+#         row = parse_rag_text(d.page_content)
+#         row.update({
+#             "business_id": d.metadata.get("business_id"),
+#             "name_meta": d.metadata.get("name"),
+#             "score": float(score),
+#         })
+#         evidence.append(row)
+
+#     return {
+#         "reply": parsed,
+#         "is_grounded": grounded,
+#         "evidence": evidence
+#     }
+
+from typing import Optional, Tuple
+
+def get_user_profile(user_id: str) -> dict:
+    p = user_profiles.get(user_id)
+    return p if isinstance(p, dict) else {}
+
+def get_doc_city_state(doc) -> Tuple[Optional[str], Optional[str]]:
+    # If you later add city/state into doc.metadata, this will use it automatically
+    city = doc.metadata.get("city")
+    state = doc.metadata.get("state")
+    if city and state:
+        return city, state
+
+    row = parse_rag_text(doc.page_content)
+    return (row.get("city") or None, row.get("state") or None)
+
+def filter_by_location(docs_and_scores, user_loc: Optional[Tuple[str, str]], min_k: int = 8):
+    """
+    Location-first relaxation:
+      1) same city+state
+      2) same state
+      3) global
+    Returns: (filtered_docs_and_scores, location_mode)
+    """
+    if not user_loc:
+        return docs_and_scores, "global"
+
+    u_city, u_state = user_loc
+
+    # 1) same city+state
+    city_filtered = []
+    for d, s in docs_and_scores:
+        city, state = get_doc_city_state(d)
+        if city == u_city and state == u_state:
+            city_filtered.append((d, s))
+    if len(city_filtered) >= min_k:
+        return city_filtered, "city"
+
+    # 2) same state
+    state_filtered = []
+    for d, s in docs_and_scores:
+        _, state = get_doc_city_state(d)
+        if state == u_state:
+            state_filtered.append((d, s))
+    if len(state_filtered) >= min_k:
+        return state_filtered, "state"
+
+    # 3) global
+    return docs_and_scores, "global"
+
+
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
-    if not retriever:
+    if not vectorstore:
         raise HTTPException(status_code=500, detail="Server Error: Restaurant data not loaded.")
 
-    user_history = user_profiles.get(request.user_id, "No past history available (New User).")
+    # --- 0) Read enriched profile correctly ---
+    profile = get_user_profile(request.user_id)
 
-    # 1) Retrieve candidates with scores (verifiable)
-    search_query = f"{request.message}\n\nUser history:\n{user_history}"
-    docs_and_scores = vectorstore.similarity_search_with_score(search_query, k=8)
-    candidate_docs = [d for d, s in docs_and_scores]
+    user_history_text = profile.get("history_text", "No past history available (New User).")
+    top_city = profile.get("top_city")
+    top_state = profile.get("top_state")
+    user_loc = (top_city, top_state) if top_city and top_state else None
 
+    # --- 1) Retrieve globally, then gate by location ---
+    search_query = f"{request.message}\n\nUser history:\n{user_history_text}"
+    docs_and_scores = vectorstore.similarity_search_with_score(search_query, k=50)
+
+    filtered, location_mode = filter_by_location(docs_and_scores, user_loc, min_k=8)
+
+    # --- 2) Build candidate list (exclude last pick) ---
+    candidate_docs = [d for d, _ in filtered]
     last = LAST_PICK.get(request.user_id)
     if last:
         candidate_docs = [d for d in candidate_docs if d.metadata.get("business_id") != last]
 
+    candidate_docs = candidate_docs[:8]
     candidate_ids = {d.metadata.get("business_id") for d in candidate_docs}
 
     context = format_docs(candidate_docs)
 
-    # 2) Call LLM
+    # --- 3) LLM call ---
     chain = (
         {
             "context": lambda _: context,
             "question": RunnablePassthrough(),
-            "user_history": lambda _: user_history,
+            "user_history": lambda _: user_history_text,
         }
         | prompt
         | llm
@@ -247,17 +426,17 @@ async def chat_endpoint(request: ChatRequest):
 
     raw = chain.invoke(request.message)
 
-    # 3) Verify JSON + groundedness
-    parsed = None
+    # --- 4) Verify JSON + groundedness ---
     grounded = False
     try:
         parsed = safe_json_loads(raw)
         grounded = parsed.get("business_id") in candidate_ids
     except Exception:
+        parsed = None
         grounded = False
 
-    # 4) Fallback if not grounded
-    if not grounded:
+    # --- 5) Fallback if not grounded ---
+    if not grounded and candidate_docs:
         top = candidate_docs[0]
         parsed = {
             "business_id": top.metadata.get("business_id"),
@@ -266,21 +445,25 @@ async def chat_endpoint(request: ChatRequest):
         }
         LAST_PICK[request.user_id] = parsed["business_id"]
 
-    # 5) Return with evidence (so you can verify in UI)
+    # --- 6) Evidence for UI/debug (still global list) ---
+    # evidence should match the candidate list shown to the LLM
     evidence = []
-    for d, score in docs_and_scores:
+    for d in candidate_docs:
         row = parse_rag_text(d.page_content)
         row.update({
             "business_id": d.metadata.get("business_id"),
             "name_meta": d.metadata.get("name"),
-            "score": float(score),
+            "city": row.get("city"),
+            "state": row.get("state"),
         })
         evidence.append(row)
 
     return {
         "reply": parsed,
         "is_grounded": grounded,
-        "evidence": evidence
+        "location_mode": location_mode,  # "city" | "state" | "global"
+        "inferred_location": {"city": top_city, "state": top_state} if user_loc else None,
+        "evidence": evidence,
     }
 
 @app.post("/validate_user")
@@ -303,7 +486,8 @@ async def validate_user(req: ValidateUserRequest):
             },
         )
 
-    preview = user_profiles[found][:300]
+    profile = user_profiles[found]
+    preview = profile.get("history_text", "")[:300] if isinstance(profile, dict) else str(profile)[:300]
     return {"ok": True, "user_id": found, "preview": preview}
 
 if __name__ == "__main__":
