@@ -94,7 +94,9 @@ def safe_json_loads(raw: str):
     return pyjson.loads(s)
 
 # 1. SETUP & CONFIGURATION
-os.environ["GOOGLE_API_KEY"] = "AIzaSyDg1rLmGmu9DERU7cabgg1hm2A1focDCLo" # Uncomment if not set in system env
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+if not GOOGLE_API_KEY:
+    raise ValueError("GOOGLE_API_KEY is missing from backend/.env")
 INDEX_FOLDER = "faiss_index_store_local"
 
 app = FastAPI()
