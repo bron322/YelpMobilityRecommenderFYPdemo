@@ -1,98 +1,123 @@
-# Yelp Mobility Data Analysis (FYP Demo)
+# Mobility-Aware Restaurant Recommendation Demo (FYP)
 
-A lightweight web dashboard for exploring **mobility patterns in Yelp users** using **DBSCAN-based spatial hubs**.  
-Built as a Final Year Project demo to communicate key findings clearly with interactive, research-style UI.
+This repository contains the demonstration dashboard developed for my Final Year Project on **mobility-aware restaurant recommendation using Yelp data**. It is designed to communicate the key ideas, methodology, and findings of the project through an interactive web interface.
+
+The demo focuses on how **user dining mobility patterns** can be profiled from historical restaurant interactions and how these patterns can support more geographically realistic recommendation behavior.
 
 ![cover](./fyp_demo_cover.png)
 
-## ✨ What this demo shows
+---
 
-### 1) Dataset overview (10K user sample)
-- High-level snapshot cards (users, restaurants, reviews, tips, check-ins)
-- Location distribution tables (top cities, coverage by state)
+## Project Overview
 
-### 2) Mobility patterns (DBSCAN hubs)
-We cluster **restaurant-only visits** per user using **DBSCAN with haversine distance** and classify users into:
+Traditional recommender systems often model user preference primarily from historical interactions, while giving limited attention to whether a recommended item is geographically realistic for the user. In the restaurant domain, this is an important limitation, since dining choices are strongly influenced by location and travel behaviour.
 
-- **One-area users**: primarily dine within a single neighborhood
-- **Two-area commuters**: show a clear two-hub pattern (e.g., home + work)
-- **Explorers**: wide-spread dining across many areas
+This project investigates whether restaurant recommendation can be improved by explicitly modelling **user mobility**. Using processed Yelp interaction data, users are profiled according to their spatial dining behaviour, and these mobility signals are incorporated into a retrieval-oriented recommendation pipeline.
+
+This demo serves as the presentation layer of the project. It allows viewers to explore the processed dataset, inspect user mobility patterns, and understand the motivation behind mobility-aware recommendation design.
+
+---
+
+## What the Demo Shows
+
+### 1. Dataset Overview
+The dashboard presents a summary of the processed Yelp sample used in the project, including:
+- number of users
+- number of restaurant businesses
+- number of reviews
+- number of tips
+- number of check-ins
+
+It also includes high-level geographic summaries such as city and state coverage to give context on the spatial distribution of the data.
+
+### 2. Mobility Profiling
+User restaurant visits are clustered using **DBSCAN with haversine distance** in order to identify meaningful dining hubs. Based on these clusters, users are grouped into interpretable mobility types such as:
+
+- **One-area users**: users whose dining activity is concentrated within a single local area
+- **Two-area commuters**: users whose activity reflects two distinct hubs, such as home and workplace regions
+- **Explorers**: users whose dining behaviour is spread across multiple or wider-ranging areas
 
 The dashboard highlights:
-- % breakdown by mobility type
-- Average hub separation (commute-scale distance for two-hub users)
-- Typical within-hub travel range (tight clustering around primary hub)
+- the proportion of users in each mobility category
+- average hub separation for two-hub users
+- typical within-hub travel range
+- summary indicators that help interpret whether the extracted mobility structure is plausible
 
-It also includes **Research Notes** to explain:
-- why DBSCAN is used
-- how `eps` is selected (k-distance analysis)
-- sanity checks for whether the results “smell right”
-- why centroid-based models can fail for multi-hub users
-
----
-
-## 🧠 Key insight (research framing)
-
-Most users are adequately represented by a **single centroid**, but a **small yet meaningful subset** exhibits multi-hub behavior.  
-For these users, centroid-based location features can land in “in-between” areas they never visit, causing systematic recommendation errors.
+### 3. Research Interpretation
+The interface also includes research notes to explain the modelling choices behind the project, including:
+- why DBSCAN was selected for hub detection
+- why haversine distance is used for geospatial clustering
+- how `eps` was selected through k-distance analysis
+- why centroid-only location representations may fail for multi-hub users
 
 ---
 
-## 🏗️ Tech stack
+## Research Motivation
 
-- React + TypeScript
-- Tailwind CSS (custom design tokens)
-- lucide-react (icons)
-- shadcn/ui components (Switch, Label, etc.)
-- CSV parsing via `papaparse`
-- Local data loading via `/public/data/*`
+A single geographic centroid is often sufficient for users whose behaviour is tightly concentrated in one area. However, a meaningful subset of users exhibit **multi-hub mobility**, where restaurant visits are distributed across distinct regions. In such cases, a single centroid may fall into an “in-between” location that the user does not meaningfully visit, leading to geographically implausible recommendations.
+
+The key motivation of this project is therefore to treat restaurant recommendation not only as a preference-learning problem, but also as a **geographically constrained retrieval problem**.
 
 ---
 
-## 📁 Data files
+## Role of This Demo in the FYP
 
-Place the following files inside:
+This repository is a **demo and visualisation layer** for the Final Year Project rather than the full experimental pipeline.
 
-```
+The core research workflow, including:
+- preprocessing Yelp interaction data
+- restaurant-only business filtering
+- sequence construction
+- mobility profiling
+- candidate retrieval
+- leave-one-out evaluation
+- baseline comparison
 
+is performed offline using Python and notebook-based experiments. The outputs are then exported into structured JSON and CSV files for use in this web demo.
+
+This frontend is intended to help communicate the project in a more accessible and interactive form during demonstrations, presentations, and report discussions.
+
+---
+
+## Tech Stack
+
+- **React**
+- **TypeScript**
+- **Tailwind CSS**
+- **lucide-react**
+- **shadcn/ui**
+- **PapaParse** for CSV parsing
+- local file loading from `/public/data/*`
+
+---
+
+## Data Files
+
+Place the following files in:
+
+```bash
 public/data/
+Required files:
+
 mobility_summary.json
 user_mobility_table.csv
-
-````
-
-Example:
-- `mobility_summary.json` contains the final aggregated metrics used by the summary cards.
-- `user_mobility_table.csv` contains per-user mobility outputs (used for future interactivity / deep dives).
-
----
-
-## 🚀 Getting started
-
-### 1) Install dependencies
-```bash
+File descriptions
+mobility_summary.json
+Contains the aggregated statistics used by the dashboard summary cards and charts.
+user_mobility_table.csv
+Contains per-user mobility outputs for inspection and future deeper interaction features.
+Getting Started
+1. Install dependencies
 npm install
-````
-
-### 2) Run locally
-
-```bash
+2. Run locally
 npm run dev
-```
 
-Open the local URL printed in your terminal (usually `http://localhost:5173` if using Vite).
+Then open the local URL shown in the terminal, typically:
 
-### 3) Build
-
-```bash
+http://localhost:5173
+3. Build for production
 npm run build
-```
-
----
-
-## 🧩 Project structure (important bits)
-
-```
+Project Structure
 src/
   components/
     dashboard/
@@ -100,37 +125,37 @@ src/
   hooks/
     useMobilityData.ts
   data/
-    dashboardData.ts   # mock visualization (fallback / schematic)
+    dashboardData.ts
 public/
   data/
     mobility_summary.json
     user_mobility_table.csv
+Important files
+MobilityTab.tsx
+Main dashboard view for presenting mobility-related analysis
+useMobilityData.ts
+Custom hook for loading and parsing local JSON/CSV data files
+dashboardData.ts
+Fallback/mock visualisation data used during development
 ```
 
----
+How Data Is Loaded
 
-## 🔌 How the data is loaded
+The dashboard uses a custom hook:
 
-The UI pulls local files through the custom hook:
-
-```ts
 import { useMobilityData } from "@/hooks/useMobilityData";
-```
 
-* Loads JSON summary → maps into `MobilitySummary`
-* Loads CSV → parses into rows (for deeper exploration)
+This hook:
 
----
+loads the JSON summary file into the dashboard summary model
+loads the CSV file and parses row-level mobility outputs
+prepares the data for rendering in cards, tables, and future detailed exploration views
+Author
 
-## 👤 Author
+Lim Jing Jie
+Final Year Project
+Mobility-Aware Restaurant Recommendation Using Yelp Data
 
-**LIM JING JIE**
-Final Year Project — Yelp Mobility Data Analysis
+Disclaimer
 
----
-
-## 📄 Notes
-
-This repository is a **demo UI** for presenting analysis outcomes.
-Core clustering + preprocessing is performed offline and exported into JSON/CSV for visualization.
-
+This repository contains the interactive demo interface for presenting the project findings. It is not the complete research codebase. The main clustering, preprocessing, recommendation, and evaluation pipeline is executed separately offline, with results exported for visualisation in this application.
