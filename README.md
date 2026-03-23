@@ -91,33 +91,63 @@ This frontend is intended to help communicate the project in a more accessible a
 
 ---
 
+````md
 ## Data Files
 
 Place the following files in:
 
 ```bash
 public/data/
-Required files:
+````
 
-mobility_summary.json
-user_mobility_table.csv
-File descriptions
-mobility_summary.json
+### Required files
+
+* `mobility_summary.json`
+* `user_mobility_table.csv`
+
+### File descriptions
+
+#### `mobility_summary.json`
+
 Contains the aggregated statistics used by the dashboard summary cards and charts.
-user_mobility_table.csv
+
+#### `user_mobility_table.csv`
+
 Contains per-user mobility outputs for inspection and future deeper interaction features.
-Getting Started
-1. Install dependencies
+
+---
+
+## Getting Started
+
+### 1. Install dependencies
+
+```bash
 npm install
-2. Run locally
+```
+
+### 2. Run locally
+
+```bash
 npm run dev
+```
 
 Then open the local URL shown in the terminal, typically:
 
+```bash
 http://localhost:5173
-3. Build for production
+```
+
+### 3. Build for production
+
+```bash
 npm run build
-Project Structure
+```
+
+---
+
+## Project Structure
+
+```bash
 src/
   components/
     dashboard/
@@ -130,32 +160,48 @@ public/
   data/
     mobility_summary.json
     user_mobility_table.csv
-Important files
-MobilityTab.tsx
-Main dashboard view for presenting mobility-related analysis
-useMobilityData.ts
-Custom hook for loading and parsing local JSON/CSV data files
-dashboardData.ts
-Fallback/mock visualisation data used during development
 ```
 
-How Data Is Loaded
+### Important files
+
+#### `MobilityTab.tsx`
+
+Main dashboard view for presenting mobility-related analysis.
+
+#### `useMobilityData.ts`
+
+Custom hook for loading and parsing local JSON/CSV data files.
+
+#### `dashboardData.ts`
+
+Fallback or mock visualisation data used during development.
+
+---
+
+## How Data Is Loaded
 
 The dashboard uses a custom hook:
 
+```ts
 import { useMobilityData } from "@/hooks/useMobilityData";
+```
 
 This hook:
 
-loads the JSON summary file into the dashboard summary model
-loads the CSV file and parses row-level mobility outputs
-prepares the data for rendering in cards, tables, and future detailed exploration views
-Author
+* loads the JSON summary file into the dashboard summary model
+* loads the CSV file and parses row-level mobility outputs
+* prepares the data for rendering in cards, tables, and future detailed exploration views
 
-Lim Jing Jie
+---
+
+## Author
+
+**Lim Jing Jie**
 Final Year Project
-Mobility-Aware Restaurant Recommendation Using Yelp Data
+**Mobility-Aware Restaurant Recommendation Using Yelp Data**
 
-Disclaimer
+---
+
+## Disclaimer
 
 This repository contains the interactive demo interface for presenting the project findings. It is not the complete research codebase. The main clustering, preprocessing, recommendation, and evaluation pipeline is executed separately offline, with results exported for visualisation in this application.
